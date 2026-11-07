@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#123b63">
+<title>Coordenadas de Dirección</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+:root{--blue:#123b63;--accent:#1976d2;--bg:#f3f6fa;--ink:#172536}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:var(--bg);color:var(--ink)}
+header{background:var(--blue);color:white;padding:24px 18px 22px}header h1{margin:0;font-size:24px}header p{margin:7px 0 0;color:#d9e8f6;font-size:14px}
+main{max-width:760px;margin:18px auto;padding:0 14px}.card{background:white;border-radius:16px;padding:18px;box-shadow:0 3px 14px #102b4512;margin-bottom:15px}
+label{display:block;font-weight:650;margin-bottom:8px}textarea,input{width:100%;border:1px solid #c8d3df;border-radius:10px;padding:13px;font:inherit;font-size:16px;background:white;color:var(--ink)}
+textarea{min-height:104px;resize:vertical}.hint{font-size:13px;color:#5d6b79;line-height:1.5;margin:9px 0 0}
+button{border:0;border-radius:10px;background:var(--accent);color:white;font-weight:700;font-size:16px;padding:13px 17px;width:100%;margin-top:13px}
+button:disabled{opacity:.6}.status{font-size:14px;margin-top:12px;line-height:1.5}.result{display:none}.coords{font-size:19px;font-weight:750;overflow-wrap:anywhere;margin:7px 0}
+#map{height:300px;border-radius:12px;margin-top:13px}.actions{display:flex;gap:9px}.actions button{font-size:14px;padding:11px 8px}.actions button.secondary{background:#e8eef5;color:#17324c}
+footer{text-align:center;color:#637181;font-size:12px;padding:12px 20px 28px}
+</style>
+</head>
+<body>
+<header><h1>📍 Coordenadas de Dirección</h1><p>Encuentra latitud y longitud de direcciones en Nicaragua.</p></header>
+<main>
+<section class="card">
+<label for="address">Escribe una dirección o referencia</label>
+<textarea id="address" placeholder="Ejemplo: Plaza del Sol, media cuadra al sur, Managua"></textarea>
+<p class="hint">Puedes escribir una dirección exacta o una referencia como “media cuadra al sur”, “una cuadra al este” o “2 cuadras al norte”. Los desplazamientos son aproximados.</p>
+<button id="search">Buscar coordenadas</button>
+<div id="status" class="status" role="status"></div>
+</section>
+<section id="result" class="card result">
+<strong>Coordenadas encontradas</strong>
+<div id="coords" class="coords"></div>
+<div id="place" class="hint"></div>
+<div class="actions"><button id="copy">Copiar coordenadas</button><button class="secondary" id="maps">Abrir en Google Maps</button></div>
+<div id="map"></div>
+<p class="hint">La ubicación se calcula a partir de resultados cartográficos disponibles. Comprueba el punto en el mapa antes de usarlo para entregas o emergencias.</p>
+</section>
+</main>
+<footer>Datos cartográficos: OpenStreetMap · Servicio de búsqueda: Nominatim</footer>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+let map, marker, lastLat, lastLon;
+function parseOffset(raw){
+ const s=raw.toLowerCase();
+ let distance=0;
+ const m=s.match(/(\d+(?:[.,]\d+)?)\s*cuadras?/);
+ if(m) distance=parseFloat(m[1].replace(',','.'))*100;
+ else if(/media\s+cuadra/.test(s)) distance=50;
+ else if(/cuadra/.test(s)) distance=100;
+ let direction=null;
+ if(/\b(al\s+sur|hacia\s+el\s+sur|sur)\b/.test(s)) direction='south';
+ else if(/\b(al\s+norte|hacia\s+el\s+norte|norte)\b/.test(s)) direction='north';
+ else if(/\b(al\s+este|hacia\s+el\s+este|este)\b/.test(s)) direction='east';
+ else if(/\b(al\s+oeste|hacia\s+el\s+oeste|oeste)\b/.test(s)) direction='west';
+ const anchor=raw.replace(/,\s*/g,' ').replace(/(?:media\s+cuadra|\d+(?:[.,]\d+)?\s*cuadras?|\buna\s+cuadra\b).*(?:al\s+sur|al\s+norte|al\s+este|al\s+oeste|sur|norte|este|oeste).*$/i,'').trim();
+ return {distance,direction,anchor:anchor||raw};
+}
+function offsetPoint(lat,lon,meters,dir){
+ const d=meters/111320;
+ if(dir==='north')lat+=d;
+ if(dir==='south')lat-=d;
+ if(dir==='east')lon+=d/Math.cos(lat*Math.PI/180);
+ if(dir==='west')lon-=d/Math.cos(lat*Math.PI/180);
+ return [lat,lon];
+}
+async function search(){
+ const raw=$('address').value.trim(); if(!raw){$('status').textContent='Escribe una dirección para comenzar.';return}
+ $('search').disabled=true;$('status').textContent='Buscando en el mapa…';$('result').style.display='none';
+ try{
+  const p=parseOffset(raw);
+  const query=p.anchor+', Nicaragua';
+  const url='https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=ni&q='+encodeURIComponent(query);
+  const res=await fetch(url,{headers:{'Accept-Language':'es'}});
+  if(!res.ok)throw new Error('El servicio de búsqueda no respondió. Intenta de nuevo.');
+  const data=await res.json();if(!data.length)throw new Error('No encontré esa referencia. Prueba agregando ciudad o departamento.');
+  let lat=Number(data[0].lat),lon=Number(data[0].lon);
+  if(p.distance&&p.direction)[lat,lon]=offsetPoint(lat,lon,p.distance,p.direction);
+  lastLat=lat;lastLon=lon;
+  $('coords').textContent=lat.toFixed(6)+', '+lon.toFixed(6);
+  $('place').textContent='Referencia encontrada: '+data[0].display_name+(p.distance&&p.direction?' · Desplazamiento aproximado aplicado: '+p.distance+' m hacia '+({north:'el norte',south:'el sur',east:'el este',west:'el oeste'}[p.direction]):'');
+  $('result').style.display='block';$('status').textContent='¡Listo! Revisa el punto en el mapa.';
+  if(!map){map=L.map('map').setView([lat,lon],17);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(map);marker=L.marker([lat,lon]).addTo(map)}
+  else{map.setView([lat,lon],17);marker.setLatLng([lat,lon])}
+  setTimeout(()=>map.invalidateSize(),100);
+ }catch(e){$('status').textContent=e.message}
+ finally{$('search').disabled=false}
+}
+$('search').addEventListener('click',search);
+$('copy').addEventListener('click',async()=>{if(lastLat==null)return;await navigator.clipboard.writeText(lastLat.toFixed(6)+', '+lastLon.toFixed(6));$('copy').textContent='¡Copiado!';setTimeout(()=>$('copy').textContent='Copiar coordenadas',1600)});
+$('maps').addEventListener('click',()=>{if(lastLat!=null)window.open('https://www.google.com/maps?q='+lastLat+','+lastLon,'_blank')});
+</script>
+</body></html>
